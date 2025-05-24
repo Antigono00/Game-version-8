@@ -1,4 +1,4 @@
-// src/components/BattleGame.jsx - COMPLETE PRODUCTION VERSION
+// src/components/BattleGame.jsx - FIXED PRODUCTION VERSION
 import React, { useState, useEffect, useContext, useCallback, useReducer } from 'react';
 import { GameContext } from '../context/GameContext';
 import { useRadixConnect } from '../context/RadixConnectContext';
@@ -18,7 +18,6 @@ import { generateEnemyCreatures, getDifficultySettings, generateEnemyItems } fro
 const ATTACK_ENERGY_COST = 2;           
 const DEFEND_ENERGY_COST = 1;           
 const BASE_ENERGY_REGEN = 3;            
-const ENERGY_STAT_MULTIPLIER = 0.1;     
 const SPELL_ENERGY_COST = 4;            
 const TOOL_ENERGY_COST = 0;             
 const MAX_ENERGY = 15;                  
@@ -46,6 +45,22 @@ const ACTIONS = {
   EXECUTE_AI_ACTION: 'EXECUTE_AI_ACTION',
   EXECUTE_AI_ACTION_SEQUENCE: 'EXECUTE_AI_ACTION_SEQUENCE',
   COMBO_BONUS: 'COMBO_BONUS'
+};
+
+// FIXED: Calculate energy cost for a creature (higher forms cost MORE)
+const calculateCreatureEnergyCost = (creature) => {
+  // Base cost depends on form: Form 0 = 5, Form 1 = 6, Form 2 = 7, Form 3 = 8
+  let energyCost = 5; // Base cost for form 0
+  
+  // Add cost based on form
+  if (creature.form !== undefined && creature.form !== null) {
+    energyCost += creature.form; // Form 0 = 5, Form 1 = 6, Form 2 = 7, Form 3 = 8
+  }
+  
+  // No additional cost modifiers for rarity to keep it simple
+  // This keeps the costs exactly as requested: 5, 6, 7, 8
+  
+  return energyCost;
 };
 
 // ENHANCED Battle state reducer with better energy management
@@ -82,11 +97,17 @@ const battleReducer = (state, action) => {
     case ACTIONS.DEPLOY_CREATURE:
       const deployEnergyCost = action.energyCost || action.creature.battleStats.energyCost || 3;
       
+      // FIXED: Prevent negative energy
+      if (state.playerEnergy < deployEnergyCost) {
+        console.error("Not enough energy to deploy creature");
+        return state;
+      }
+      
       return {
         ...state,
         playerHand: state.playerHand.filter(c => c.id !== action.creature.id),
         playerField: [...state.playerField, action.creature],
-        playerEnergy: state.playerEnergy - deployEnergyCost,
+        playerEnergy: Math.max(0, state.playerEnergy - deployEnergyCost),
         consecutiveActions: { ...state.consecutiveActions, player: state.consecutiveActions.player + 1 },
         energyMomentum: { ...state.energyMomentum, player: state.energyMomentum.player + deployEnergyCost }
       };
@@ -94,14 +115,27 @@ const battleReducer = (state, action) => {
     case ACTIONS.ENEMY_DEPLOY_CREATURE:
       console.log(`REDUCER: Deploying enemy creature ${action.creature.species_name} to field`);
       
-      const newEnemyField = [...state.enemyField, action.creature];
       const enemyDeployCost = action.energyCost || action.creature.battleStats.energyCost || 3;
+      
+      // FIXED: Prevent negative energy and duplicate deployment
+      if (state.enemyEnergy < enemyDeployCost) {
+        console.error("Enemy doesn't have enough energy to deploy");
+        return state;
+      }
+      
+      // FIXED: Check if creature already on field
+      if (state.enemyField.some(c => c.id === action.creature.id)) {
+        console.error("Creature already deployed!");
+        return state;
+      }
+      
+      const newEnemyField = [...state.enemyField, action.creature];
       
       return {
         ...state,
         enemyHand: state.enemyHand.filter(c => c.id !== action.creature.id),
         enemyField: newEnemyField,
-        enemyEnergy: state.enemyEnergy - enemyDeployCost,
+        enemyEnergy: Math.max(0, state.enemyEnergy - enemyDeployCost),
         consecutiveActions: { ...state.consecutiveActions, enemy: state.consecutiveActions.enemy + 1 },
         energyMomentum: { ...state.energyMomentum, enemy: state.energyMomentum.enemy + enemyDeployCost }
       };
@@ -136,13 +170,23 @@ const battleReducer = (state, action) => {
         comboMultiplier = 1 + (state.consecutiveActions.enemy * 0.05);
       }
       
+      // FIXED: Validate energy before spending
+      if (isPlayerAttacker && state.playerEnergy < action.energyCost) {
+        console.error("Not enough energy for attack");
+        return state;
+      }
+      if (!isPlayerAttacker && state.enemyEnergy < action.energyCost) {
+        console.error("Enemy doesn't have enough energy for attack");
+        return state;
+      }
+      
       // Spend energy for attack
       const updatedPlayerEnergy = isPlayerAttacker 
-        ? state.playerEnergy - action.energyCost 
+        ? Math.max(0, state.playerEnergy - action.energyCost)
         : state.playerEnergy;
         
       const updatedEnemyEnergy = !isPlayerAttacker 
-        ? state.enemyEnergy - action.energyCost 
+        ? Math.max(0, state.enemyEnergy - action.energyCost)
         : state.enemyEnergy;
       
       return {
@@ -209,6 +253,16 @@ const battleReducer = (state, action) => {
       const isPlayerCaster = state.playerField.some(c => c.id === spellResult.updatedCaster.id);
       const isPlayerTarget = state.playerField.some(c => c.id === spellResult.updatedTarget.id);
       
+      // FIXED: Validate energy
+      if (isPlayerCaster && state.playerEnergy < (action.energyCost || SPELL_ENERGY_COST)) {
+        console.error("Not enough energy for spell");
+        return state;
+      }
+      if (!isPlayerCaster && state.enemyEnergy < (action.energyCost || SPELL_ENERGY_COST)) {
+        console.error("Enemy doesn't have enough energy for spell");
+        return state;
+      }
+      
       return {
         ...state,
         playerField: state.playerField.map(c => {
@@ -229,8 +283,8 @@ const battleReducer = (state, action) => {
           }
           return c;
         }).filter(c => c.currentHealth > 0),
-        playerEnergy: isPlayerCaster ? state.playerEnergy - (action.energyCost || SPELL_ENERGY_COST) : state.playerEnergy,
-        enemyEnergy: !isPlayerCaster ? state.enemyEnergy - (action.energyCost || SPELL_ENERGY_COST) : state.enemyEnergy,
+        playerEnergy: isPlayerCaster ? Math.max(0, state.playerEnergy - (action.energyCost || SPELL_ENERGY_COST)) : state.playerEnergy,
+        enemyEnergy: !isPlayerCaster ? Math.max(0, state.enemyEnergy - (action.energyCost || SPELL_ENERGY_COST)) : state.enemyEnergy,
         playerSpells: isPlayerCaster ? state.playerSpells.filter(s => s.id !== spell.id) : state.playerSpells,
         enemySpells: action.isEnemySpell ? state.enemySpells.filter(s => s.id !== spell.id) : state.enemySpells,
         consecutiveActions: isPlayerCaster
@@ -244,12 +298,22 @@ const battleReducer = (state, action) => {
     case ACTIONS.DEFEND:
       const isPlayerDefending = state.playerField.some(c => c.id === action.updatedCreature.id);
       
+      // FIXED: Validate energy
+      if (isPlayerDefending && state.playerEnergy < DEFEND_ENERGY_COST) {
+        console.error("Not enough energy to defend");
+        return state;
+      }
+      if (!isPlayerDefending && state.enemyEnergy < DEFEND_ENERGY_COST) {
+        console.error("Enemy doesn't have enough energy to defend");
+        return state;
+      }
+      
       const playerEnergyAfterDefend = isPlayerDefending 
-        ? state.playerEnergy - DEFEND_ENERGY_COST 
+        ? Math.max(0, state.playerEnergy - DEFEND_ENERGY_COST)
         : state.playerEnergy;
         
       const enemyEnergyAfterDefend = !isPlayerDefending 
-        ? state.enemyEnergy - DEFEND_ENERGY_COST 
+        ? Math.max(0, state.enemyEnergy - DEFEND_ENERGY_COST)
         : state.enemyEnergy;
       
       return {
@@ -494,20 +558,37 @@ const battleReducer = (state, action) => {
       switch (aiAction.type) {
         case 'deploy':
           if (aiAction.creature) {
+            // FIXED: Validate energy and prevent duplicates
+            const deployCost = aiAction.energyCost || 3;
+            if (updatedState.enemyEnergy < deployCost) {
+              console.error("AI tried to deploy without enough energy");
+              break;
+            }
+            if (updatedState.enemyField.some(c => c.id === aiAction.creature.id)) {
+              console.error("AI tried to deploy duplicate creature");
+              break;
+            }
+            
             updatedState.enemyHand = updatedState.enemyHand.filter(c => c.id !== aiAction.creature.id);
             updatedState.enemyField = [...updatedState.enemyField, aiAction.creature];
-            updatedState.enemyEnergy -= aiAction.energyCost || 3;
+            updatedState.enemyEnergy = Math.max(0, updatedState.enemyEnergy - deployCost);
             updatedState.consecutiveActions.enemy += 1;
-            updatedState.energyMomentum.enemy += aiAction.energyCost || 3;
+            updatedState.energyMomentum.enemy += deployCost;
           }
           break;
           
         case 'attack':
           if (aiAction.attacker && aiAction.target) {
+            const attackCost = aiAction.energyCost || 2;
+            if (updatedState.enemyEnergy < attackCost) {
+              console.error("AI tried to attack without enough energy");
+              break;
+            }
+            
             const attackResult = processAttack(aiAction.attacker, aiAction.target);
-            updatedState.enemyEnergy -= aiAction.energyCost || 2;
+            updatedState.enemyEnergy = Math.max(0, updatedState.enemyEnergy - attackCost);
             updatedState.consecutiveActions.enemy += 1;
-            updatedState.energyMomentum.enemy += aiAction.energyCost || 2;
+            updatedState.energyMomentum.enemy += attackCost;
             
             // Update creatures based on attack results
             updatedState.playerField = updatedState.playerField.map(c => 
@@ -522,8 +603,14 @@ const battleReducer = (state, action) => {
           
         case 'defend':
           if (aiAction.creature) {
+            const defendCost = aiAction.energyCost || 1;
+            if (updatedState.enemyEnergy < defendCost) {
+              console.error("AI tried to defend without enough energy");
+              break;
+            }
+            
             const updatedDefender = defendCreature(aiAction.creature, state.difficulty);
-            updatedState.enemyEnergy -= aiAction.energyCost || 1;
+            updatedState.enemyEnergy = Math.max(0, updatedState.enemyEnergy - defendCost);
             updatedState.consecutiveActions.enemy += 1;
             
             updatedState.enemyField = updatedState.enemyField.map(c => 
@@ -557,12 +644,18 @@ const battleReducer = (state, action) => {
           
         case 'useSpell':
           if (aiAction.spell && aiAction.caster && aiAction.target) {
+            const spellCost = aiAction.energyCost || SPELL_ENERGY_COST;
+            if (updatedState.enemyEnergy < spellCost) {
+              console.error("AI tried to cast spell without enough energy");
+              break;
+            }
+            
             const spellResult = applySpell(aiAction.caster, aiAction.target, aiAction.spell, state.difficulty);
             
             if (spellResult) {
-              updatedState.enemyEnergy -= aiAction.energyCost || SPELL_ENERGY_COST;
+              updatedState.enemyEnergy = Math.max(0, updatedState.enemyEnergy - spellCost);
               updatedState.consecutiveActions.enemy += 1;
-              updatedState.energyMomentum.enemy += aiAction.energyCost || SPELL_ENERGY_COST;
+              updatedState.energyMomentum.enemy += spellCost;
               
               // Update caster and target
               updatedState.enemyField = updatedState.enemyField.map(c => {
@@ -589,17 +682,28 @@ const battleReducer = (state, action) => {
       let newState = { ...state };
       
       for (const aiAction of action.actionSequence) {
+        // FIXED: Validate each action in the sequence
+        const actionCost = aiAction.energyCost || 0;
+        if (newState.enemyEnergy < actionCost) {
+          console.log(`Skipping AI action ${aiAction.type} - not enough energy`);
+          continue;
+        }
+        
         // Process each action in the sequence
         switch (aiAction.type) {
           case 'deploy':
+            if (newState.enemyField.some(c => c.id === aiAction.creature.id)) {
+              console.log("Skipping duplicate deployment");
+              continue;
+            }
             newState.enemyHand = newState.enemyHand.filter(c => c.id !== aiAction.creature.id);
             newState.enemyField = [...newState.enemyField, aiAction.creature];
-            newState.enemyEnergy -= aiAction.energyCost;
+            newState.enemyEnergy = Math.max(0, newState.enemyEnergy - aiAction.energyCost);
             break;
             
           case 'attack':
             const attackResult = processAttack(aiAction.attacker, aiAction.target);
-            newState.enemyEnergy -= aiAction.energyCost;
+            newState.enemyEnergy = Math.max(0, newState.enemyEnergy - aiAction.energyCost);
             
             // Update creatures based on attack results
             newState.playerField = newState.playerField.map(c => 
@@ -613,7 +717,7 @@ const battleReducer = (state, action) => {
             
           case 'defend':
             const updatedDefender = defendCreature(aiAction.creature);
-            newState.enemyEnergy -= aiAction.energyCost;
+            newState.enemyEnergy = Math.max(0, newState.enemyEnergy - aiAction.energyCost);
             
             newState.enemyField = newState.enemyField.map(c => 
               c.id === updatedDefender.id ? updatedDefender : c
@@ -742,21 +846,25 @@ const BattleGame = ({ onClose }) => {
   // ========== BATTLE MECHANICS ==========
   // Regenerate energy with balanced scaling
   const regenerateEnergy = useCallback(() => {
-    // Calculate player energy bonus from creatures' energy stat
-    let playerBonus = 0;
+    // Calculate player energy bonus from total energy stats of deployed creatures
+    let playerTotalEnergy = 0;
     playerField.forEach(creature => {
       if (creature.stats && creature.stats.energy) {
-        playerBonus += Math.floor(creature.stats.energy * ENERGY_STAT_MULTIPLIER);
+        playerTotalEnergy += creature.stats.energy;
       }
     });
+    // For every 50 energy points total, get +1 energy per turn
+    const playerBonus = Math.floor(playerTotalEnergy / 50);
     
-    // Calculate enemy energy bonus from creatures' energy stat
-    let enemyBonus = 0;
+    // Calculate enemy energy bonus from total energy stats of deployed creatures
+    let enemyTotalEnergy = 0;
     enemyField.forEach(creature => {
       if (creature.stats && creature.stats.energy) {
-        enemyBonus += Math.floor(creature.stats.energy * ENERGY_STAT_MULTIPLIER);
+        enemyTotalEnergy += creature.stats.energy;
       }
     });
+    // For every 50 energy points total, get +1 energy per turn
+    const enemyBonus = Math.floor(enemyTotalEnergy / 50);
     
     // Add difficulty-based energy regen bonuses for enemies
     const difficultySettings = getDifficultySettings(difficulty);
@@ -766,12 +874,12 @@ const BattleGame = ({ onClose }) => {
     const playerRegen = BASE_ENERGY_REGEN + playerBonus;
     const enemyRegen = BASE_ENERGY_REGEN + enemyBonus + enemyDifficultyBonus;
     
-    console.log(`Energy Regen - Player: +${playerRegen}, Enemy: +${enemyRegen}`);
+    console.log(`Energy Regen - Player: +${playerRegen} (${playerTotalEnergy} total energy), Enemy: +${enemyRegen} (${enemyTotalEnergy} total energy)`);
     
     dispatch({ type: ACTIONS.REGENERATE_ENERGY, playerRegen, enemyRegen });
     
     if (activePlayer === 'player') {
-      addToBattleLog(`You gained +${playerRegen} energy.`);
+      addToBattleLog(`You gained +${playerRegen} energy. (${playerTotalEnergy} total creature energy)`);
     } else {
       addToBattleLog(`Enemy gained +${enemyRegen} energy.`);
     }
@@ -1001,13 +1109,17 @@ const BattleGame = ({ onClose }) => {
       return;
     }
     
-    // Create battle-ready versions of player creatures
+    // FIXED: Create battle-ready versions of player creatures with proper energy costs
     const battleCreatures = creatureNfts.map(creature => {
       const derivedStats = calculateDerivedStats(creature);
+      const energyCost = calculateCreatureEnergyCost(creature);
       
       return {
         ...creature,
-        battleStats: derivedStats,
+        battleStats: {
+          ...derivedStats,
+          energyCost: energyCost
+        },
         currentHealth: derivedStats.maxHealth,
         activeEffects: [],
         isDefending: false
@@ -1020,42 +1132,22 @@ const BattleGame = ({ onClose }) => {
     // Generate enemy deck
     const enemyCreatures = generateEnemyCreatures(difficulty, diffSettings.enemyDeckSize, battleCreatures);
     
-    // Calculate battle stats for enemy creatures
+    // FIXED: Calculate battle stats for enemy creatures with proper energy costs
     const enemyWithStats = enemyCreatures.map((creature, index) => {
       const derivedStats = calculateDerivedStats(creature);
+      const energyCost = calculateCreatureEnergyCost(creature);
       
       console.log(`Enemy ${creature.species_name} (${creature.rarity}, Form ${creature.form}):`);
       console.log(`Base stats:`, creature.stats);
       console.log(`Derived stats:`, derivedStats);
-      
-      // Balanced energy cost scaling
-      let energyCost = 3;
-      
-      // Adjust cost based on form
-      if (creature.form) {
-        energyCost += creature.form;
-      }
-      
-      // Further adjustment based on rarity
-      if (creature.rarity === 'Rare') energyCost += 1;
-      else if (creature.rarity === 'Epic') energyCost += 2;
-      else if (creature.rarity === 'Legendary') energyCost += 3;
-      
-      // Cap at 8 energy
-      energyCost = Math.min(8, Math.round(energyCost));
-      
-      // Make early creatures more affordable
-      if (index === 0) {
-        energyCost = Math.min(4, energyCost);
-      } else if (index === 1) {
-        energyCost = Math.min(5, energyCost);
-      }
-      
-      derivedStats.energyCost = energyCost;
+      console.log(`Energy cost:`, energyCost);
       
       return {
         ...creature,
-        battleStats: derivedStats,
+        battleStats: {
+          ...derivedStats,
+          energyCost: energyCost
+        },
         currentHealth: derivedStats.maxHealth,
         activeEffects: [],
         isDefending: false
@@ -1133,6 +1225,13 @@ const BattleGame = ({ onClose }) => {
     
     console.log("AI determined action:", aiAction);
     
+    // FIXED: Handle endTurn action properly
+    if (aiAction.type === 'endTurn') {
+      console.log("AI ending turn immediately");
+      setTimeout(() => finishEnemyTurn(), 500);
+      return;
+    }
+    
     // Check if it's an array of actions (multi-action) or single action
     if (Array.isArray(aiAction)) {
       // Multi-action sequence
@@ -1179,6 +1278,12 @@ const BattleGame = ({ onClose }) => {
   // Execute a single AI action
   const executeSingleAIAction = useCallback((aiAction) => {
     console.log("Executing single AI action:", aiAction.type);
+    
+    // FIXED: Check for endTurn action
+    if (aiAction.type === 'endTurn') {
+      addToBattleLog("Enemy ended their turn.");
+      return;
+    }
     
     switch(aiAction.type) {
       case 'deploy':
@@ -1310,10 +1415,6 @@ const BattleGame = ({ onClose }) => {
         }
         break;
         
-      case 'endTurn':
-        addToBattleLog("Enemy ended their turn.");
-        break;
-        
       default:
         console.log("Unknown AI action type:", aiAction.type);
     }
@@ -1322,6 +1423,13 @@ const BattleGame = ({ onClose }) => {
   // Execute AI action wrapper
   const executeAIAction = useCallback((aiAction) => {
     console.log("Executing AI action:", aiAction);
+    
+    // FIXED: Handle endTurn action immediately
+    if (aiAction.type === 'endTurn') {
+      addToBattleLog("Enemy ended their turn.");
+      setTimeout(() => finishEnemyTurn(), 500);
+      return;
+    }
     
     // Execute the action
     executeSingleAIAction(aiAction);
@@ -1341,7 +1449,7 @@ const BattleGame = ({ onClose }) => {
         finishEnemyTurn();
       }
     }, 1000);
-  }, [difficulty, state.enemyEnergy, executeSingleAIAction]);
+  }, [difficulty, state.enemyEnergy, executeSingleAIAction, addToBattleLog]);
   
   // Finish the enemy turn
   const finishEnemyTurn = useCallback(() => {
