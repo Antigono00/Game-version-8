@@ -20,7 +20,7 @@ const DEFEND_ENERGY_COST = 1;
 const BASE_ENERGY_REGEN = 3;            
 const SPELL_ENERGY_COST = 4;            
 const TOOL_ENERGY_COST = 0;             
-const MAX_ENERGY = 15;                  
+const MAX_ENERGY = 25;                  // Increased from 15 to accommodate higher energy generation
 const ENERGY_DECAY_RATE = 0.1;          
 
 // Action types for our reducer
@@ -95,7 +95,18 @@ const battleReducer = (state, action) => {
       };
     
     case ACTIONS.DEPLOY_CREATURE:
-      const deployEnergyCost = action.energyCost || action.creature.battleStats.energyCost || 3;
+      console.log("=== DEPLOY_CREATURE ACTION ===");
+      console.log("Creature being deployed:", action.creature);
+      console.log("Creature form:", action.creature.form);
+      console.log("Creature battleStats:", action.creature.battleStats);
+      console.log("Energy cost from action:", action.energyCost);
+      console.log("Energy cost from battleStats:", action.creature.battleStats?.energyCost);
+      
+      // FIXED: Parse form as number to avoid string concatenation
+      const formLevel = parseInt(action.creature.form) || 0;
+      const correctCost = 5 + formLevel;
+      const deployEnergyCost = action.energyCost || action.creature.battleStats?.energyCost || correctCost;
+      console.log("Final deploy energy cost:", deployEnergyCost);
       
       // FIXED: Prevent negative energy
       if (state.playerEnergy < deployEnergyCost) {
@@ -853,8 +864,8 @@ const BattleGame = ({ onClose }) => {
         playerTotalEnergy += creature.stats.energy;
       }
     });
-    // For every 50 energy points total, get +1 energy per turn
-    const playerBonus = Math.floor(playerTotalEnergy / 50);
+    // For every 10 energy points total, get +1 energy per turn
+    const playerBonus = Math.floor(playerTotalEnergy / 10);
     
     // Calculate enemy energy bonus from total energy stats of deployed creatures
     let enemyTotalEnergy = 0;
@@ -863,8 +874,8 @@ const BattleGame = ({ onClose }) => {
         enemyTotalEnergy += creature.stats.energy;
       }
     });
-    // For every 50 energy points total, get +1 energy per turn
-    const enemyBonus = Math.floor(enemyTotalEnergy / 50);
+    // For every 10 energy points total, get +1 energy per turn
+    const enemyBonus = Math.floor(enemyTotalEnergy / 10);
     
     // Add difficulty-based energy regen bonuses for enemies
     const difficultySettings = getDifficultySettings(difficulty);
@@ -920,6 +931,11 @@ const BattleGame = ({ onClose }) => {
   const deployCreature = useCallback((creature) => {
     if (!creature) return;
     
+    console.log("=== DEPLOY CREATURE CALLED ===");
+    console.log("Full creature object:", JSON.stringify(creature, null, 2));
+    console.log("Creature stats:", creature.stats);
+    console.log("Creature battleStats:", creature.battleStats);
+    
     // Get max field size for player
     const maxPlayerFieldSize = 4;
     
@@ -928,21 +944,49 @@ const BattleGame = ({ onClose }) => {
       return;
     }
     
-    const energyCost = creature.battleStats.energyCost || 3;
-    if (playerEnergy < energyCost) {
-      addToBattleLog(`Not enough energy to deploy ${creature.species_name}. Needs ${energyCost} energy.`);
-      return;
+    // Check all possible sources of energy cost
+    console.log("Checking energy cost sources:");
+    console.log("1. battleStats.energyCost:", creature.battleStats?.energyCost);
+    console.log("2. Direct energyCost:", creature.energyCost);
+    
+    // FIXED: Parse form as number to avoid string concatenation
+    const formLevel = parseInt(creature.form) || 0;
+    const correctCost = 5 + formLevel;
+    console.log("3. Form-based calculation: 5 + " + creature.form + " (parsed: " + formLevel + ") = " + correctCost);
+    
+    const energyCost = creature.battleStats?.energyCost || correctCost;
+    
+    console.log(`FINAL: Deploying ${creature.species_name} - Form: ${creature.form}, Energy Cost: ${energyCost}`);
+    
+    if (energyCost > MAX_ENERGY) {
+      console.error(`ERROR: Energy cost ${energyCost} is way too high! Maximum energy is ${MAX_ENERGY}!`);
+      console.log(`Using correct cost instead: ${correctCost}`);
+      // Use the correct cost instead
+      const actualCost = correctCost;
+      
+      if (playerEnergy < actualCost) {
+        addToBattleLog(`Not enough energy to deploy ${creature.species_name}. Needs ${actualCost} energy.`);
+        return;
+      }
+      
+      dispatch({ type: ACTIONS.DEPLOY_CREATURE, creature, energyCost: actualCost });
+      addToBattleLog(`You deployed ${creature.species_name} to the battlefield! (-${actualCost} energy)`);
+    } else {
+      if (playerEnergy < energyCost) {
+        addToBattleLog(`Not enough energy to deploy ${creature.species_name}. Needs ${energyCost} energy.`);
+        return;
+      }
+      
+      dispatch({ type: ACTIONS.DEPLOY_CREATURE, creature, energyCost });
+      
+      // Check for deployment combo
+      let comboMessage = '';
+      if (consecutiveActions.player > 0) {
+        comboMessage = ` Combo x${consecutiveActions.player + 1}!`;
+      }
+      
+      addToBattleLog(`You deployed ${creature.species_name} to the battlefield! (-${energyCost} energy)${comboMessage}`);
     }
-    
-    dispatch({ type: ACTIONS.DEPLOY_CREATURE, creature, energyCost });
-    
-    // Check for deployment combo
-    let comboMessage = '';
-    if (consecutiveActions.player > 0) {
-      comboMessage = ` Combo x${consecutiveActions.player + 1}!`;
-    }
-    
-    addToBattleLog(`You deployed ${creature.species_name} to the battlefield! (-${energyCost} energy)${comboMessage}`);
     
     console.log(`Deployed ${creature.species_name} to player field`);
   }, [playerField, playerEnergy, consecutiveActions, addToBattleLog]);
@@ -1111,19 +1155,47 @@ const BattleGame = ({ onClose }) => {
     
     // FIXED: Create battle-ready versions of player creatures with proper energy costs
     const battleCreatures = creatureNfts.map(creature => {
-      const derivedStats = calculateDerivedStats(creature);
-      const energyCost = calculateCreatureEnergyCost(creature);
+      console.log("=== INITIALIZING PLAYER CREATURE ===");
+      console.log("Original creature:", creature);
       
-      return {
+      // Add specialty_stats if not present (based on species)
+      if (!creature.specialty_stats) {
+        // You can define specialty stats per species here
+        // For now, let's add a default empty array
+        creature.specialty_stats = [];
+      }
+      
+      const derivedStats = calculateDerivedStats(creature);
+      console.log("Derived stats from calculateDerivedStats:", derivedStats);
+      console.log("Energy cost from derivedStats:", derivedStats.energyCost);
+      
+      // Double-check and override energy cost to ensure it's correct
+      // FIXED: Parse form as number to avoid string concatenation
+      const formLevel = parseInt(creature.form) || 0;
+      const correctEnergyCost = 5 + formLevel;
+      console.log(`Form: ${creature.form} (type: ${typeof creature.form}), parsed as: ${formLevel}`);
+      console.log(`Correct energy cost should be: ${correctEnergyCost}`);
+      
+      if (derivedStats.energyCost !== correctEnergyCost) {
+        console.error(`ENERGY COST MISMATCH! Got ${derivedStats.energyCost}, expected ${correctEnergyCost}`);
+      }
+      
+      const battleCreature = {
         ...creature,
         battleStats: {
           ...derivedStats,
-          energyCost: energyCost
+          energyCost: correctEnergyCost // Force correct value
         },
         currentHealth: derivedStats.maxHealth,
         activeEffects: [],
         isDefending: false
       };
+      
+      console.log("Final battle creature:", battleCreature);
+      console.log("Final energy cost:", battleCreature.battleStats.energyCost);
+      console.log("=== END CREATURE INIT ===\n");
+      
+      return battleCreature;
     });
     
     // Get the difficulty settings
@@ -1135,7 +1207,10 @@ const BattleGame = ({ onClose }) => {
     // FIXED: Calculate battle stats for enemy creatures with proper energy costs
     const enemyWithStats = enemyCreatures.map((creature, index) => {
       const derivedStats = calculateDerivedStats(creature);
-      const energyCost = calculateCreatureEnergyCost(creature);
+      // Override energy cost to ensure it's exactly what we want
+      // FIXED: Parse form as number to avoid string concatenation
+      const formLevel = parseInt(creature.form) || 0;
+      const energyCost = 5 + formLevel; // Form 0=5, Form 1=6, Form 2=7, Form 3=8
       
       console.log(`Enemy ${creature.species_name} (${creature.rarity}, Form ${creature.form}):`);
       console.log(`Base stats:`, creature.stats);
@@ -1146,7 +1221,7 @@ const BattleGame = ({ onClose }) => {
         ...creature,
         battleStats: {
           ...derivedStats,
-          energyCost: energyCost
+          energyCost: energyCost // Override with our simple formula
         },
         currentHealth: derivedStats.maxHealth,
         activeEffects: [],
