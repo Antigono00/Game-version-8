@@ -1,4 +1,4 @@
-// src/utils/battleCalculations.js - ENHANCED WITH BALANCED DAMAGE SYSTEM
+// src/utils/battleCalculations.js - FIXED WITH PROPER ENERGY COST SCALING
 // Calculate derived stats from base creature stats - BALANCED SCALING
 export const calculateDerivedStats = (creature) => {
   // Validate input
@@ -13,13 +13,15 @@ export const calculateDerivedStats = (creature) => {
       initiative: 10,
       criticalChance: 5,
       dodgeChance: 3,
-      energyCost: 3
+      energyCost: 5 // Default to form 0 cost
     };
   }
   
   const { energy, strength, magic, stamina, speed } = creature.stats;
   const rarityMultiplier = getRarityMultiplier(creature.rarity);
-  const formMultiplier = getFormMultiplier(creature.form || 0);
+  // FIXED: Parse form as number before using it
+  const formLevel = parseInt(creature.form) || 0;
+  const formMultiplier = getFormMultiplier(formLevel);
   const combinationBonus = (creature.combination_level || 0) * 0.1 + 1; // Reduced from 0.15
   
   // Apply specialty stat bonuses
@@ -62,8 +64,19 @@ export const calculateDerivedStats = (creature) => {
     10 + (speed * 2.5 * specialtyMultipliers.speed) + (energy * 0.3)
   ) * formMultiplier * combinationBonus;
   
+  // FIXED: Calculate DEPLOYMENT energy cost - NOT the creature's energy stat!
+  // Form 0 = 5, Form 1 = 6, Form 2 = 7, Form 3 = 8
+  // We already parsed formLevel above, so use it here
+  const deploymentCost = 5 + formLevel;
+  
+  // Debug log to identify the issue
+  console.log(`Calculating energy cost for ${creature.species_name || 'creature'}:`);
+  console.log(`  - Form: ${creature.form} (type: ${typeof creature.form}, parsed: ${formLevel})`);
+  console.log(`  - Energy stat: ${energy}`);
+  console.log(`  - Deployment cost: ${deploymentCost} (should be 5 + ${formLevel})`);
+  
   // BALANCED: Apply diminishing returns with reasonable caps
-  return {
+  const result = {
     physicalAttack: Math.round(applyDiminishingReturns(rawPhysicalAttack, 60, 120)),
     magicalAttack: Math.round(applyDiminishingReturns(rawMagicalAttack, 60, 120)),
     physicalDefense: Math.round(applyDiminishingReturns(rawPhysicalDefense, 40, 80)),
@@ -72,8 +85,12 @@ export const calculateDerivedStats = (creature) => {
     initiative: Math.round(applyDiminishingReturns(rawInitiative, 40, 60)),
     criticalChance: Math.min(5 + (speed * 0.6 * specialtyMultipliers.speed) + (magic * 0.2), 30),
     dodgeChance: Math.min(3 + (speed * 0.4 * specialtyMultipliers.speed) + (stamina * 0.1), 20),
-    energyCost: Math.max(1, Math.round(10 - (energy * 0.25 * specialtyMultipliers.energy)))
+    energyCost: deploymentCost // This should be 5, 6, 7, or 8 only!
   };
+  
+  console.log(`  - Final energyCost in battleStats: ${result.energyCost}`);
+  
+  return result;
 };
 
 // BALANCED: Get specialty stat multipliers with more reasonable bonuses
@@ -136,8 +153,9 @@ export const calculateDamage = (attacker, defender, attackType = 'physical') => 
     : defenderStats.magicalDefense;
   
   // BALANCED: Calculate form difference for damage scaling
-  const attackerForm = attacker.form || 0;
-  const defenderForm = defender.form || 0;
+  // FIXED: Parse forms as numbers
+  const attackerForm = parseInt(attacker.form) || 0;
+  const defenderForm = parseInt(defender.form) || 0;
   const formDifference = attackerForm - defenderForm;
   
   // Calculate effectiveness multiplier
@@ -324,6 +342,8 @@ export const getRarityMultiplier = (rarity) => {
 
 export const getFormMultiplier = (form) => {
   if (form === undefined || form === null) return 1.0; // Default if missing
+  
+  // Form should already be a number when passed to this function
   return 1 + (form * 0.25); // Reduced from 0.35 (Form 0 = 1.0x, Form 3 = 1.75x)
 };
 
@@ -336,12 +356,15 @@ export const calculateCreaturePower = (creature) => {
   const defensePower = Math.max(stats.physicalDefense || 0, stats.magicalDefense || 0);
   const utilityPower = (stats.initiative || 0) + (stats.criticalChance || 0) + (stats.dodgeChance || 0);
   
+  // FIXED: Parse form as number
+  const formLevel = parseInt(creature.form) || 0;
+  
   return Math.round(
     (attackPower * 2) + 
     defensePower + 
     (stats.maxHealth || 0) * 0.1 + 
     utilityPower * 0.5 +
-    (creature.form || 0) * 5 +
+    formLevel * 5 +
     getRarityValue(creature.rarity) * 10
   );
 };
@@ -459,7 +482,10 @@ export const calculateFieldPresenceBonus = (friendlyCreatures, enemyCreatures) =
 
 // NEW: Calculate damage reduction based on form difference
 export const calculateFormDamageModifier = (attackerForm, defenderForm) => {
-  const formDifference = attackerForm - defenderForm;
+  // FIXED: Parse forms as numbers
+  const attackerFormLevel = parseInt(attackerForm) || 0;
+  const defenderFormLevel = parseInt(defenderForm) || 0;
+  const formDifference = attackerFormLevel - defenderFormLevel;
   
   if (formDifference >= 3) {
     return { multiplier: 0.5, cap: 0.6 }; // 50% damage, cap at 60% health
@@ -531,7 +557,9 @@ export const calculateCombatRating = (creature) => {
   const baseRating = offensiveRating + defensiveRating + healthRating + utilityRating;
   
   // Apply form and rarity multipliers
-  const formBonus = (creature.form || 0) * 50;
+  // FIXED: Parse form as number
+  const formLevel = parseInt(creature.form) || 0;
+  const formBonus = formLevel * 50;
   const rarityBonus = getRarityValue(creature.rarity) * 30;
   
   return Math.round(baseRating + formBonus + rarityBonus);
