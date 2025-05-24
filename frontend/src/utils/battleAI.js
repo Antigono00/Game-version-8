@@ -1,4 +1,4 @@
-// src/utils/battleAI.js - ENHANCED VERSION WITH ALL FIXES AND IMPROVEMENTS
+// src/utils/battleAI.js - FIXED VERSION WITH ALL CORRECTIONS
 import { getDifficultySettings } from './difficultySettings';
 
 // Get max enemy field size based on difficulty
@@ -7,7 +7,7 @@ const getMaxEnemyFieldSize = (difficulty) => {
   return settings.maxFieldSize || 3;
 };
 
-// ENHANCED AI ACTION DETERMINATION WITH ITEM USAGE AND BETTER DEPLOYMENT
+// FIXED: Enhanced AI action determination with proper energy validation and unique creature instances
 export const determineAIAction = (
   difficulty, 
   enemyHand, 
@@ -24,62 +24,102 @@ export const determineAIAction = (
   const difficultySettings = getDifficultySettings(difficulty);
   const maxFieldSize = getMaxEnemyFieldSize(difficulty);
   
-  // ENHANCED: Only end turn if truly no actions possible
-  if (enemyEnergy <= 0 && enemyField.length === 0 && enemyHand.length === 0) {
-    console.log("AI SAFEGUARD triggered: Ending turn - no resources");
+  // FIXED: Ensure we always return a valid action
+  try {
+    // Check if we have any valid actions available
+    const hasCreaturesInHand = enemyHand.length > 0;
+    const hasCreaturesOnField = enemyField.length > 0;
+    const hasEnergyToAct = enemyEnergy > 0;
+    
+    // If we have no creatures anywhere and no energy, end turn
+    if (!hasCreaturesInHand && !hasCreaturesOnField) {
+      console.log("AI: No creatures available, ending turn");
+      return { type: 'endTurn' };
+    }
+    
+    // If we have no energy at all, end turn
+    if (!hasEnergyToAct) {
+      console.log("AI: No energy available, ending turn");
+      return { type: 'endTurn' };
+    }
+    
+    // Check if multi-action turn should be executed
+    const shouldMultiAction = Math.random() < (difficultySettings.multiActionChance || 0.3);
+    const hasEnergyForMultiple = enemyEnergy >= 4; // At least 2 actions worth
+    
+    // Multi-action planning system with item usage
+    const actionPlan = planOptimalActionsWithItems(
+      difficulty,
+      enemyHand,
+      enemyField,
+      playerField,
+      enemyTools,
+      enemySpells,
+      enemyEnergy,
+      maxFieldSize,
+      difficultySettings
+    );
+    
+    if (actionPlan && actionPlan.length > 0) {
+      // FIXED: Validate all actions have valid data
+      const validActions = actionPlan.filter(action => {
+        if (action.type === 'deploy' && !action.creature) return false;
+        if (action.type === 'attack' && (!action.attacker || !action.target)) return false;
+        if (action.type === 'defend' && !action.creature) return false;
+        if (action.type === 'useTool' && (!action.tool || !action.target)) return false;
+        if (action.type === 'useSpell' && (!action.spell || !action.caster || !action.target)) return false;
+        return true;
+      });
+      
+      if (validActions.length === 0) {
+        console.log("AI: No valid actions found, ending turn");
+        return { type: 'endTurn' };
+      }
+      
+      // Return array of actions for multi-action turns
+      if (shouldMultiAction && hasEnergyForMultiple && validActions.length > 1) {
+        console.log(`AI executing MULTI-ACTION turn with ${validActions.length} actions`);
+        const maxActions = difficulty === 'expert' ? 5 : 
+                          difficulty === 'hard' ? 4 : 
+                          difficulty === 'medium' ? 3 : 2;
+        
+        const multiActions = validActions.slice(0, Math.min(maxActions, validActions.length));
+        console.log(`Returning ${multiActions.length} actions for multi-action turn`);
+        return multiActions;
+      } else {
+        // Return single action
+        console.log('Returning single action');
+        return validActions[0];
+      }
+    }
+    
+    // Fallback to single action if planning fails
+    const singleAction = determineSingleActionWithItems(
+      difficulty, 
+      enemyHand, 
+      enemyField, 
+      playerField, 
+      enemyTools, 
+      enemySpells, 
+      enemyEnergy, 
+      maxFieldSize
+    );
+    
+    // FIXED: Ensure we always return a valid action
+    if (!singleAction || singleAction.type === undefined) {
+      console.log("AI: Fallback - ending turn");
+      return { type: 'endTurn' };
+    }
+    
+    return singleAction;
+    
+  } catch (error) {
+    console.error("AI Error:", error);
     return { type: 'endTurn' };
   }
-  
-  // NEW: Check if multi-action turn should be executed
-  const shouldMultiAction = Math.random() < (difficultySettings.multiActionChance || 0.3);
-  const hasEnergyForMultiple = enemyEnergy >= 4; // At least 2 actions worth
-  
-  // Multi-action planning system with item usage
-  const actionPlan = planOptimalActionsWithItems(
-    difficulty,
-    enemyHand,
-    enemyField,
-    playerField,
-    enemyTools,
-    enemySpells,
-    enemyEnergy,
-    maxFieldSize,
-    difficultySettings
-  );
-  
-  if (actionPlan && actionPlan.length > 0) {
-    // ENHANCED: Return array of actions for multi-action turns
-    if (shouldMultiAction && hasEnergyForMultiple && actionPlan.length > 1) {
-      console.log(`AI executing MULTI-ACTION turn with ${actionPlan.length} actions`);
-      // Return multiple actions based on energy and difficulty
-      const maxActions = difficulty === 'expert' ? 5 : 
-                        difficulty === 'hard' ? 4 : 
-                        difficulty === 'medium' ? 3 : 2;
-      
-      const multiActions = actionPlan.slice(0, Math.min(maxActions, actionPlan.length));
-      console.log(`Returning ${multiActions.length} actions for multi-action turn`);
-      return multiActions;
-    } else {
-      // Return single action
-      console.log('Returning single action');
-      return actionPlan[0];
-    }
-  }
-  
-  // Fallback to single action if planning fails
-  return determineSingleActionWithItems(
-    difficulty, 
-    enemyHand, 
-    enemyField, 
-    playerField, 
-    enemyTools, 
-    enemySpells, 
-    enemyEnergy, 
-    maxFieldSize
-  );
 };
 
-// ENHANCED: Advanced multi-action planning with item usage
+// FIXED: Enhanced multi-action planning with proper energy tracking and unique instances
 const planOptimalActionsWithItems = (
   difficulty, 
   enemyHand, 
@@ -98,6 +138,9 @@ const planOptimalActionsWithItems = (
   let availableTools = [...enemyTools];
   let availableSpells = [...enemySpells];
   
+  // FIXED: Track deployed creature IDs to prevent duplicates
+  const deployedCreatureIds = new Set();
+  
   // Calculate board state priorities
   const boardAnalysis = analyzeCompleteBoardState(
     enemyField, 
@@ -110,9 +153,9 @@ const planOptimalActionsWithItems = (
   console.log("Enhanced Board Analysis:", boardAnalysis);
   
   // PRIORITY 0: Use defensive items if in critical danger
-  if (boardAnalysis.criticalCreatures.length > 0 && availableTools.length > 0) {
+  if (boardAnalysis.criticalCreatures.length > 0 && availableTools.length > 0 && remainingEnergy >= 0) {
     const defensiveItem = findBestDefensiveItem(availableTools, boardAnalysis.criticalCreatures[0]);
-    if (defensiveItem && remainingEnergy >= 0) { // Tools are typically free
+    if (defensiveItem) {
       actions.push({
         type: 'useTool',
         tool: defensiveItem,
@@ -194,15 +237,20 @@ const planOptimalActionsWithItems = (
       remainingEnergy, 
       maxFieldSize, 
       deploymentAnalysis.urgency,
-      difficulty
+      difficulty,
+      deployedCreatureIds
     );
     
     for (const deployment of deploymentActions) {
       if (remainingEnergy >= deployment.energyCost && currentField.length < maxFieldSize) {
-        actions.push(deployment);
-        remainingEnergy -= deployment.energyCost;
-        currentField.push(deployment.creature);
-        currentHand = currentHand.filter(c => c.id !== deployment.creature.id);
+        // FIXED: Ensure we don't deploy the same creature twice
+        if (!deployedCreatureIds.has(deployment.creature.id)) {
+          actions.push(deployment);
+          remainingEnergy -= deployment.energyCost;
+          currentField.push(deployment.creature);
+          currentHand = currentHand.filter(c => c.id !== deployment.creature.id);
+          deployedCreatureIds.add(deployment.creature.id);
+        }
       }
     }
   }
@@ -288,16 +336,20 @@ const planOptimalActionsWithItems = (
     actions.map(a => `${a.type}(cost:${a.energyCost})`)
   );
   
-  // ENHANCED: Validate energy costs before returning
+  // FIXED: Strictly validate energy costs before returning
   const validatedActions = [];
   let totalEnergyCost = 0;
   
   for (const action of actions) {
-    if (totalEnergyCost + (action.energyCost || 0) <= enemyEnergy) {
-      validatedActions.push(action);
-      totalEnergyCost += (action.energyCost || 0);
+    const actionCost = action.energyCost || 0;
+    if (totalEnergyCost + actionCost <= enemyEnergy) {
+      // FIXED: Ensure action has all required properties
+      if (validateAction(action)) {
+        validatedActions.push(action);
+        totalEnergyCost += actionCost;
+      }
     } else {
-      console.log(`Skipping action ${action.type} - would exceed energy budget`);
+      console.log(`Skipping action ${action.type} - would exceed energy budget (${totalEnergyCost + actionCost} > ${enemyEnergy})`);
       break;
     }
   }
@@ -305,7 +357,28 @@ const planOptimalActionsWithItems = (
   return validatedActions;
 };
 
-// NEW: Analyze complete board state including item options
+// FIXED: Validate action has all required properties
+const validateAction = (action) => {
+  switch (action.type) {
+    case 'deploy':
+      return action.creature && action.creature.id && action.creature.battleStats;
+    case 'attack':
+      return action.attacker && action.target && action.attacker.id && action.target.id;
+    case 'defend':
+      return action.creature && action.creature.id;
+    case 'useTool':
+      return action.tool && action.target && action.tool.id && action.target.id;
+    case 'useSpell':
+      return action.spell && action.caster && action.target && 
+             action.spell.id && action.caster.id && action.target.id;
+    case 'endTurn':
+      return true;
+    default:
+      return false;
+  }
+};
+
+// Analyze complete board state including item options
 const analyzeCompleteBoardState = (enemyField, playerField, enemyHand, enemyEnergy, difficulty) => {
   const analysis = {
     enemyTotalPower: 0,
@@ -399,7 +472,7 @@ const analyzeCompleteBoardState = (enemyField, playerField, enemyHand, enemyEner
   return analysis;
 };
 
-// NEW: Analyze deployment strategy based on multiple factors
+// Analyze deployment strategy based on multiple factors
 const analyzeDeploymentStrategy = (enemyField, enemyHand, playerField, energy, maxFieldSize, boardAnalysis) => {
   const currentFieldUtilization = enemyField.length / maxFieldSize;
   const hasEnergyReserves = energy >= 6;
@@ -444,7 +517,7 @@ const analyzeDeploymentStrategy = (enemyField, enemyHand, playerField, energy, m
   };
 };
 
-// NEW: Plan deployment wave for multiple creatures
+// FIXED: Plan deployment wave ensuring unique creatures
 const planDeploymentWave = (
   enemyHand, 
   currentField, 
@@ -452,7 +525,8 @@ const planDeploymentWave = (
   availableEnergy, 
   maxFieldSize, 
   urgency, 
-  difficulty
+  difficulty,
+  deployedCreatureIds
 ) => {
   const deployments = [];
   const fieldSpace = maxFieldSize - currentField.length;
@@ -484,6 +558,12 @@ const planDeploymentWave = (
   for (const entry of prioritizedHand) {
     const cost = entry.creature.battleStats?.energyCost || 3;
     
+    // FIXED: Check if creature already deployed
+    if (deployedCreatureIds && deployedCreatureIds.has(entry.creature.id)) {
+      console.log(`Skipping creature ${entry.creature.id} - already deployed`);
+      continue;
+    }
+    
     if (deployments.length < targetDeployments && 
         energySpent + cost <= availableEnergy &&
         currentField.length + deployments.length < maxFieldSize) {
@@ -506,7 +586,7 @@ const planDeploymentWave = (
   return deployments;
 };
 
-// NEW: Calculate deployment score for a creature
+// Calculate deployment score for a creature
 const calculateDeploymentScore = (creature, currentField, playerField, difficulty) => {
   let score = 0;
   
@@ -555,7 +635,7 @@ const calculateDeploymentScore = (creature, currentField, playerField, difficult
   return score;
 };
 
-// NEW: Calculate field synergy between creatures
+// Calculate field synergy between creatures
 const calculateFieldSynergy = (newCreature, existingField) => {
   let synergyScore = 0;
   
@@ -593,7 +673,7 @@ const calculateFieldSynergy = (newCreature, existingField) => {
   return synergyScore;
 };
 
-// NEW: Check type advantage
+// Check type advantage
 const hasTypeAdvantage = (attacker, defender) => {
   if (!attacker.stats || !defender.stats) return false;
   
@@ -614,7 +694,7 @@ const hasTypeAdvantage = (attacker, defender) => {
   return false;
 };
 
-// NEW: Find best defensive item for a creature
+// Find best defensive item for a creature
 const findBestDefensiveItem = (tools, targetCreature) => {
   const defensiveTools = tools.filter(tool => 
     tool.tool_effect === 'Shield' || 
@@ -657,7 +737,7 @@ const scoreDefensiveTool = (tool, creature) => {
   return score;
 };
 
-// NEW: Find lethal spell sequence
+// Find lethal spell sequence
 const findLethalSpellSequence = (enemyField, playerField, spells, availableEnergy) => {
   if (playerField.length === 0 || spells.length === 0) return [];
   
@@ -787,7 +867,7 @@ const estimateSpellDamage = (spell, caster, target) => {
   return Math.floor(damage);
 };
 
-// NEW: Select best offensive spell
+// Select best offensive spell
 const selectBestOffensiveSpell = (spells, enemyField, playerField, energy) => {
   if (spells.length === 0 || enemyField.length === 0 || playerField.length === 0) return null;
   
@@ -847,7 +927,7 @@ const scoreSpellOption = (spell, caster, target, allTargets) => {
   return score;
 };
 
-// NEW: Find strongest attacker
+// Find strongest attacker
 const findStrongestAttacker = (field) => {
   if (field.length === 0) return null;
   
@@ -867,7 +947,7 @@ const findStrongestAttacker = (field) => {
   }, null);
 };
 
-// ENHANCED: Plan coordinated attacks with better targeting
+// Plan coordinated attacks with better targeting
 const planCoordinatedAttacks = (enemyField, playerField, availableEnergy, aggressionLevel, boardAnalysis) => {
   const attacks = [];
   const availableAttackers = enemyField.filter(creature => !creature.isDefending);
@@ -1003,7 +1083,7 @@ const assignAttackersToTargets = (attackers, targetPriorities, maxAssignments) =
   return assignments;
 };
 
-// NEW: Plan utility actions with items
+// Plan utility actions with items
 const planUtilityActions = (enemyField, playerField, availableTools, remainingEnergy, existingActions) => {
   const utilityActions = [];
   
@@ -1081,7 +1161,7 @@ const calculateCreatureValue = (creature) => {
   return value;
 };
 
-// Helper: Estimate attack damage (existing function)
+// Helper: Estimate attack damage
 const estimateAttackDamage = (attacker, defender) => {
   const attackerPhysical = attacker.battleStats?.physicalAttack || 0;
   const attackerMagical = attacker.battleStats?.magicalAttack || 0;
@@ -1095,7 +1175,7 @@ const estimateAttackDamage = (attacker, defender) => {
   return Math.max(physicalDamage, magicalDamage);
 };
 
-// ENHANCED: Single action determination with items
+// FIXED: Single action determination with better validation
 const determineSingleActionWithItems = (
   difficulty, 
   enemyHand, 
@@ -1106,33 +1186,56 @@ const determineSingleActionWithItems = (
   enemyEnergy, 
   maxFieldSize
 ) => {
-  // Use enhanced AI functions based on difficulty
-  switch (difficulty) {
-    case 'easy':
-      return determineEasyAIActionWithItems(
-        enemyHand, enemyField, playerField, enemyTools, enemySpells, enemyEnergy, maxFieldSize
-      );
-    case 'medium':
-      return determineMediumAIActionWithItems(
-        enemyHand, enemyField, playerField, enemyTools, enemySpells, enemyEnergy, maxFieldSize
-      );
-    case 'hard':
-      return determineHardAIActionWithItems(
-        enemyHand, enemyField, playerField, enemyTools, enemySpells, enemyEnergy, maxFieldSize
-      );
-    case 'expert':
-      return determineExpertAIActionWithItems(
-        enemyHand, enemyField, playerField, enemyTools, enemySpells, enemyEnergy, maxFieldSize
-      );
-    default:
+  try {
+    // Use enhanced AI functions based on difficulty
+    let action;
+    switch (difficulty) {
+      case 'easy':
+        action = determineEasyAIActionWithItems(
+          enemyHand, enemyField, playerField, enemyTools, enemySpells, enemyEnergy, maxFieldSize
+        );
+        break;
+      case 'medium':
+        action = determineMediumAIActionWithItems(
+          enemyHand, enemyField, playerField, enemyTools, enemySpells, enemyEnergy, maxFieldSize
+        );
+        break;
+      case 'hard':
+        action = determineHardAIActionWithItems(
+          enemyHand, enemyField, playerField, enemyTools, enemySpells, enemyEnergy, maxFieldSize
+        );
+        break;
+      case 'expert':
+        action = determineExpertAIActionWithItems(
+          enemyHand, enemyField, playerField, enemyTools, enemySpells, enemyEnergy, maxFieldSize
+        );
+        break;
+      default:
+        action = { type: 'endTurn' };
+    }
+    
+    // FIXED: Validate action before returning
+    if (!action || !validateAction(action)) {
+      console.log("Invalid action returned, ending turn");
       return { type: 'endTurn' };
+    }
+    
+    return action;
+  } catch (error) {
+    console.error("Error in determineSingleActionWithItems:", error);
+    return { type: 'endTurn' };
   }
 };
 
-// ENHANCED Easy AI with item usage
+// FIXED: Easy AI with proper validation
 const determineEasyAIActionWithItems = (
   enemyHand, enemyField, playerField, enemyTools, enemySpells, enemyEnergy, maxFieldSize
 ) => {
+  // If no field and no energy to deploy, end turn
+  if (enemyField.length === 0 && enemyEnergy < 3) {
+    return { type: 'endTurn' };
+  }
+  
   // PRIORITY 1: Use healing tool if any creature is low
   if (enemyField.length > 0 && enemyTools.length > 0) {
     const woundedCreature = enemyField.find(c => 
@@ -1202,11 +1305,13 @@ const determineEasyAIActionWithItems = (
         return currentPower > bestPower ? current : best;
       }, null);
       
-      return {
-        type: 'deploy',
-        creature: bestCreature,
-        energyCost: bestCreature.battleStats?.energyCost || 3
-      };
+      if (bestCreature) {
+        return {
+          type: 'deploy',
+          creature: bestCreature,
+          energyCost: bestCreature.battleStats?.energyCost || 3
+        };
+      }
     }
   }
   
@@ -1229,10 +1334,15 @@ const determineEasyAIActionWithItems = (
   return { type: 'endTurn' };
 };
 
-// ENHANCED Medium AI with strategic item usage
+// Medium AI with strategic item usage
 const determineMediumAIActionWithItems = (
   enemyHand, enemyField, playerField, enemyTools, enemySpells, enemyEnergy, maxFieldSize
 ) => {
+  // If no field and no energy to deploy, end turn
+  if (enemyField.length === 0 && enemyEnergy < 3) {
+    return { type: 'endTurn' };
+  }
+  
   // PRIORITY 1: Strategic spell usage
   if (enemySpells.length > 0 && enemyField.length > 0 && playerField.length > 0 && enemyEnergy >= 4) {
     const offensiveSpell = enemySpells.find(s => 
@@ -1402,10 +1512,35 @@ const findOptimalAttack = (attackers, defenders) => {
   return bestPairing;
 };
 
-// ENHANCED Hard AI with advanced item combos
+// Select best creature for deployment
+const selectBestCreatureForDeployment = (hand, field, playerField, energy, difficulty) => {
+  const affordableCreatures = hand.filter(creature => 
+    (creature.battleStats?.energyCost || 3) <= energy
+  );
+  
+  if (affordableCreatures.length === 0) return null;
+  
+  // Score each creature
+  const scoredCreatures = affordableCreatures.map(creature => ({
+    creature,
+    score: calculateDeploymentScore(creature, field, playerField, difficulty)
+  }));
+  
+  // Sort by score and return the best
+  scoredCreatures.sort((a, b) => b.score - a.score);
+  
+  return scoredCreatures[0]?.creature || null;
+};
+
+// Hard AI with advanced item combos
 const determineHardAIActionWithItems = (
   enemyHand, enemyField, playerField, enemyTools, enemySpells, enemyEnergy, maxFieldSize
 ) => {
+  // If no creatures and no way to deploy, end turn
+  if (enemyField.length === 0 && (enemyHand.length === 0 || enemyEnergy < 3)) {
+    return { type: 'endTurn' };
+  }
+  
   const boardAnalysis = analyzeCompleteBoardState(
     enemyField, playerField, enemyHand, enemyEnergy, 'hard'
   );
@@ -1645,13 +1780,15 @@ const findOptimalSpellTiming = (spells, field, playerField, boardAnalysis) => {
       const caster = findBestSpellCaster(field, damageSpell);
       const target = boardAnalysis.weakEnemies[0];
       
-      return {
-        type: 'useSpell',
-        spell: damageSpell,
-        caster: caster,
-        target: target,
-        energyCost: 4
-      };
+      if (caster && target) {
+        return {
+          type: 'useSpell',
+          spell: damageSpell,
+          caster: caster,
+          target: target,
+          energyCost: 4
+        };
+      }
     }
   }
   
@@ -1767,7 +1904,7 @@ const planEmergencyDefense = (field, tools, threatenedCreature) => {
   return null;
 };
 
-// ENHANCED Expert AI with perfect play and item mastery
+// Expert AI with perfect play and item mastery
 const determineExpertAIActionWithItems = (
   enemyHand, enemyField, playerField, enemyTools, enemySpells, enemyEnergy, maxFieldSize
 ) => {
@@ -1795,7 +1932,7 @@ const determineExpertAIActionWithItems = (
   );
 };
 
-// NEW: Get tool effectiveness for AI decision making
+// Get tool effectiveness for AI decision making
 const getToolEffectiveness = (tool, target, boardState) => {
   let score = 0;
   
@@ -1844,7 +1981,7 @@ const getToolEffectiveness = (tool, target, boardState) => {
   return score;
 };
 
-// Helper: Get rarity value (existing function kept)
+// Helper: Get rarity value
 const getRarityValue = (rarity) => {
   switch (rarity) {
     case 'Legendary': return 4;
